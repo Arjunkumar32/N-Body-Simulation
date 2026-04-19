@@ -1,0 +1,364 @@
+\documentclass[aspectratio=169]{beamer}
+
+% Theme selection
+\usetheme{Madrid}
+\usecolortheme{beaver}
+
+% Packages
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+% Code snippet styles
+\lstset{
+    language=C++,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    showstringspaces=false,
+    tabsize=2,
+    frame=single
+}
+
+% Title Slide Info
+\title[Parallel N-Body Simulation]{Astrophysics N-Body Simulation}
+\subtitle{Parallelizing Gravitational Interactions via Direct and Barnes-Hut Methods}
+\author{Your Name}
+\institute{Your University / Organization}
+\date{\today}
+
+\begin{document}
+
+% Slide 1: Title
+\begin{frame}
+    \titlepage
+\end{frame}
+
+% Slide 2: Outline
+\begin{frame}{Outline}
+    \tableofcontents
+\end{frame}
+
+\section{Introduction \& Motivation}
+% Slide 3
+\begin{frame}{What is the N-Body Problem?}
+    \begin{itemize}
+        \item Predicting the individual motions of a group of celestial objects interacting with each other gravitationally.
+        \item Inspired by Newton's law of universal gravitation.
+        \item Historically applied to the Sun, Earth, and Moon.
+        \item Currently applied to entire star clusters, galaxies, and cosmological structure formation.
+    \end{itemize}
+\end{frame}
+
+% Slide 4
+\begin{frame}{Applications of N-Body Simulations}
+    \begin{itemize}
+        \item \textbf{Astrophysics:} Galaxy collisions, dark matter halos, star cluster dynamics.
+        \item \textbf{Molecular Dynamics:} VdW forces between atoms behave similarly to gravity (inverse square laws).
+        \item \textbf{Plasma Physics:} Charged particle interactions.
+        \item \textbf{Computer Graphics:} Particle systems for visual effects (smoke, explosions).
+    \end{itemize}
+\end{frame}
+
+% Slide 5
+\begin{frame}{The Computational Challenge}
+    \begin{itemize}
+        \item Gravity has infinite range: \textit{every} particle interacts with \textit{every other} particle.
+        \item For $N$ bodies, there are $\frac{N(N-1)}{2}$ unique interactions.
+        \item The computational complexity is $\mathcal{O}(N^2)$.
+        \item A simulation with 1 billion stars requires $10^{18}$ calculations per time step.
+        \item \textbf{Conclusion:} Brute-force is not scalable for real astrophysics.
+    \end{itemize}
+\end{frame}
+
+% Slide 6
+\begin{frame}{Project Objectives}
+    \begin{enumerate}
+        \item Build a custom simulation engine in C++ from scratch.
+        \item Implement the \textbf{Direct $\mathcal{O}(N^2)$} computation method.
+        \item Implement the optimized \textbf{Barnes-Hut $\mathcal{O}(N \log N)$} tree algorithm.
+        \item Utilize \textbf{OpenMP} for shared-memory multi-core parallelization.
+        \item Apply a \textbf{Leapfrog Integrator} for perfect energy conservation.
+        \item Provide Python data visualizations of physical scaling and orbital tracks.
+    \end{enumerate}
+\end{frame}
+
+\section{Theoretical Framework}
+% Slide 7
+\begin{frame}{Governing Equations}
+    Newton's law states the force $\mathbf{F}_{ij}$ exerted on body $i$ by body $j$ is:
+    \begin{equation*}
+        \mathbf{F}_{ij} = G \frac{m_i m_j}{|\mathbf{r}_j - \mathbf{r}_i|^3} (\mathbf{r}_j - \mathbf{r}_i)
+    \end{equation*}
+    Total force on body $i$ from all other bodies:
+    \begin{equation*}
+        \mathbf{F}_i = \sum_{\substack{j=1 \\ j \neq i}}^{N} \mathbf{F}_{ij}
+    \end{equation*}
+    Acceleration of body $i$:
+    \begin{equation*}
+        \mathbf{a}_i = \frac{\mathbf{F}_i}{m_i}
+    \end{equation*}
+\end{frame}
+
+% Slide 8
+\begin{frame}{The Softening Factor ($\epsilon$)}
+    \textbf{The Problem of Singularities:}
+    \begin{itemize}
+        \item If two particles get extremely close, distance $|\mathbf{r}_{ij}| \to 0$.
+        \item Force $\mathbf{F} \to \infty$.
+        \item This breaks numerical integrators, causing particles to shoot off at infinite velocities.
+    \end{itemize}
+    \textbf{The Solution:} We introduce a small softening length $\epsilon$.
+    \begin{equation*}
+        \mathbf{F}_{ij} = G \frac{m_i m_j}{(|\mathbf{r}_{ij}|^2 + \epsilon^2)^{3/2}} \mathbf{r}_{ij}
+    \end{equation*}
+\end{frame}
+
+% Slide 9
+\begin{frame}{Initial Conditions}
+    \textbf{The "Galaxy Disk" Model:}
+    \begin{itemize}
+        \item \textbf{Core:} One super-massive central particle ($M_{core} = N$).
+        \item \textbf{Satellites:} $N-1$ particles initialized at random angles $\phi \in [0, 2\pi]$ and radii $R \in [1, 5]$.
+        \item \textbf{Circular Velocity:} Initialized perpendicular to the radius.
+        \begin{equation*}
+            v = \sqrt{\frac{G \cdot M_{core}}{R}}
+        \end{equation*}
+        \item Ensures a stable, rotating disk configuration instead of immediate collapse.
+    \end{itemize}
+\end{frame}
+
+% Slide 10
+\begin{frame}{Unit Systems}
+    \begin{itemize}
+        \item \textbf{SI Units} ($kg, meters, seconds$) cause severe floating-point issues in astrophysics.
+        \item Earth's mass is $\sim10^{24}$ kg, sizes are $10^{11}$ m.
+        \item We use \textbf{Natural Dimensionless Units}:
+        \begin{itemize}
+            \item Gravitational Constant $G = 1.0$
+            \item Satellite masses $\sim 1.0$
+            \item Lengths mapped to Astronomical Units (AU)
+        \end{itemize}
+        \item Prevents numeric overflow and simplifies debugging.
+    \end{itemize}
+\end{frame}
+
+\section{Direct Approach \& OpenMP}
+% Slide 11
+\begin{frame}{Algorithm: Direct $\mathcal{O}(N^2)$ Approach}
+    \begin{itemize}
+        \item Iterate through every body $i$.
+        \item For every body $i$, iterate through every other body $j$.
+        \item Calculate $\mathbf{F}_{ij}$.
+        \item Highly computationally intensive, but perfectly accurate.
+    \end{itemize}
+\end{frame}
+
+% Slide 12
+\begin{frame}{Optimization: Newton's Third Law}
+    \begin{itemize}
+        \item Every action has an equal and opposite reaction: $\mathbf{F}_{ji} = -\mathbf{F}_{ij}$.
+        \item We only need to compute unique pairs.
+        \item Inner loop runs from $j = i + 1$ to $N$.
+        \item Cuts total floating point operations exactly in half!
+    \end{itemize}
+\end{frame}
+
+% Slide 13
+\begin{frame}{Parallelizing with OpenMP}
+    \begin{itemize}
+        \item The outer loop over body $i$ can be distributed across multi-core CPUs.
+        \item OpenMP creates a thread-pool (e.g., 16 hardware threads).
+        \item Pragma directive: \texttt{\#pragma omp parallel for schedule(dynamic)}
+        \item Why dynamic schedule? The inner loop gets smaller as $i$ grows, meaning early iterations take longer. Dynamic scheduling perfectly load-balances the threads.
+    \end{itemize}
+\end{frame}
+
+% Slide 14
+\begin{frame}[fragile]{The Data Race Problem}
+    Because we use Newton's 3rd Law, Thread $T_1$ processing body $i$ updates body $j$'s force.
+    At the \textit{exact same time}, Thread $T_2$ processing body $k$ might also try to update body $j$'s force.
+    
+    \begin{block}{Consequence}
+        A memory race condition. Forces get overwritten, physics are corrupted.
+    \end{block}
+\end{frame}
+
+% Slide 15
+\begin{frame}{Solution: Thread-Local Reduction}
+    \begin{itemize}
+        \item We provide \textit{each parallel thread} its own fully initialized $\mathcal{O}(N)$ array of forces.
+        \item Thread $T$ only writes to \texttt{localForce[T][j]}.
+        \item Absolutely zero memory contention during the heavy $O(N^2)$ loop.
+        \item Afterwards, a blazing-fast $\mathcal{O}(N \times Threads)$ sequential reduction merges all thread-local arrays into the global forces array.
+    \end{itemize}
+\end{frame}
+
+\section{Barnes-Hut Algorithm}
+% Slide 16
+\begin{frame}{The Scaling Wall of $\mathcal{O}(N^2)$}
+    \begin{itemize}
+        \item Even with Newton's 3rd law and 16-core OpenMP parallelism, the Direct approach becomes physically un-runnable past $\sim 50,000$ particles.
+        \item We need an algorithmic breakthrough, not just more hardware.
+        \item Introduced in 1986 by Josh Barnes and Piet Hut.
+    \end{itemize}
+\end{frame}
+
+% Slide 17
+\begin{frame}{Introduction to Barnes-Hut}
+    \begin{itemize}
+        \item \textbf{Core Philosophy:} If a cluster of stars is sufficiently far away, we can approximate the entire cluster as a single massive point-particle located at the cluster's Center of Mass.
+        \item Reduces complexity from checking $N$ bodies to traversing a tree in $\log N$ steps.
+        \item Total complexity drops from $\mathcal{O}(N^2)$ to $\mathcal{O}(N \log N)$.
+    \end{itemize}
+\end{frame}
+
+% Slide 18
+\begin{frame}{The Octree Data Structure}
+    \begin{itemize}
+        \item A 3D spatial partitioning tree (the 3D equivalent of a Quadtree).
+        \item The entire universe is a root cube.
+        \item If a cube contains more than one particle, it is recursively subdivided into 8 smaller child octants.
+        \item Leaves contain exactly 0 or 1 particle.
+        \item Internal nodes store exactly the total mass and Center of Mass for all children below them.
+    \end{itemize}
+\end{frame}
+
+% Slide 19
+\begin{frame}{The Multipole Acceptance Criterion (MAC)}
+    How do we decide if a node is "far enough" to be approximated?
+    \begin{equation*}
+        \frac{s}{d} < \theta
+    \end{equation*}
+    \begin{itemize}
+        \item $s =$ width of the octree cell.
+        \item $d =$ distance from the particle to the cell's center of mass.
+        \item $\theta =$ threshold parameter (typically 0.5).
+        \item If true, compute Force against the node. If false, recurse deeper into the children.
+    \end{itemize}
+\end{frame}
+
+% Slide 20
+\begin{frame}{Parallelizing Barnes-Hut}
+    \begin{itemize}
+        \item \textbf{Tree Construction:} Performed sequentially on 1 thread. It is only $\mathcal{O}(N \log N)$ and involves vast memory allocation, making thread-safety expensive.
+        \item \textbf{Force Traversal:} Performed in parallel! 
+        \item Since the tree is \textit{read-only} during force computation, each particle can traverse the tree simultaneously on different threads without any locks or race conditions.
+    \end{itemize}
+\end{frame}
+
+\section{Time Integration}
+% Slide 21
+\begin{frame}{Time Integration: Why not Euler?}
+    \begin{itemize}
+        \item Euler integration: $\mathbf{x}_{new} = \mathbf{x}_{old} + \mathbf{v} \cdot dt$.
+        \item It is a first-order method.
+        \item It does not conserve energy! Gravity causes artificial outward spirals resulting in the galaxy exploding over time.
+    \end{itemize}
+\end{frame}
+
+% Slide 22
+\begin{frame}{The Leapfrog (Velocity-Verlet) Integrator}
+    \textbf{Kick-Drift-Kick Scheme:}
+    \begin{enumerate}
+        \item \textbf{Kick:} Accelerate velocity by half a step ($dt/2$).
+        \item \textbf{Drift:} Update position using the new half-step velocity.
+        \item \textbf{Forces:} Re-calculate gravitational forces at new positions.
+        \item \textbf{Kick:} Accelerate velocity by the second half step ($dt/2$).
+    \end{enumerate}
+    Calculates velocity at half-integer time intervals offset from positions.
+\end{frame}
+
+% Slide 23
+\begin{frame}{Symplectic Properties}
+    \begin{itemize}
+        \item Leapfrog is a \textbf{Symplectic Integrator}.
+        \item It preserves the phase-space volume of the system.
+        \item \textbf{Real-world meaning:} Energy oscillates slightly step-to-step, but the long-term energy error is strictly bounded. Planets maintain stable, closed orbital ellipses forever instead of drifting.
+    \end{itemize}
+\end{frame}
+
+\section{Results \& Visualizations}
+% Slide 24
+\begin{frame}{Software Architecture \& Toolchain}
+    \begin{itemize}
+        \item \textbf{Engine:} Modern C++17.
+        \item \textbf{Build System:} CMake for cross-platform Multi-Target compilation.
+        \item \textbf{Parallelism API:} OpenMP via \texttt{omp.h}.
+        \item \textbf{Data Hand-off:} Computations write state-vectors efficiently to CSV files per-step.
+        \item \textbf{Visualizer:} Python, Pandas, Matplotlib 3D, Headless Agg backend for GIF generation.
+    \end{itemize}
+\end{frame}
+
+% Slide 25
+\begin{frame}{Visualizing Trajectories}
+    \begin{itemize}
+        \item An automated pipeline reads \texttt{trajectories.csv}.
+        \item Generates a 3-D animated GIF showing particle tracks over time.
+        \item Generates a 2-D XY "Spaghetti-plot" of the disk.
+        \item Shows clear galaxy stability, confirming appropriate Initial Conditions and Integrator capability.
+    \end{itemize}
+\end{frame}
+
+% Slide 26
+\begin{frame}{Performance Benchmark Results}
+    Tests run across varying $N$ counts using 16 Threads on 500 Steps:
+    \begin{table}[]
+        \centering
+        \begin{tabular}{|l|l|l|}
+        \hline
+        \textbf{Bodies (N)} & \textbf{Direct Time} & \textbf{Barnes-Hut Time} \\ \hline
+        50                  & 1.23 s               & 0.97 s                   \\ \hline
+        200                 & 1.81 s               & 1.66 s                   \\ \hline
+        800                 & 5.36 s               & 5.00 s                   \\ \hline
+        1600                & 9.75 s               & 9.68 s                   \\ \hline
+        \end{tabular}
+    \end{table}
+\end{frame}
+
+% Slide 27
+\begin{frame}{Analyzing the Scaling Graph}
+    \begin{itemize}
+        \item Why is Direct comparable to Barnes-Hut at $N < 1600$?
+        \item Array-based direct access is highly cache-friendly. Vector units in the CPU breeze through contiguous floating point arrays.
+        \item Barnes-Hut requires pointer-chasing through tree nodes, which incurs significant CPU cache-misses and memory latency.
+        \item But as $N \to 10000+$, mathematics takes over, and $O(N \log N)$ easily overcomes cache-miss latency.
+    \end{itemize}
+\end{frame}
+
+\section{Conclusion}
+% Slide 28
+\begin{frame}{Conclusion}
+    \begin{itemize}
+        \item Successfully modeled complex gravitational dynamics.
+        \item Showcased the extreme importance of Algorithm choice ($O(N^2)$ vs $O(N \log N)$) alongside Hardware choice (OpenMP Multi-threading).
+        \item Proved that Leapfrog integration is necessary for energetic stability in Hamiltonian physics systems.
+    \end{itemize}
+\end{frame}
+
+% Slide 29
+\begin{frame}{Future Work}
+    \begin{itemize}
+        \item \textbf{GPGPU Acceleration:} Porting the nested $\mathcal{O}(N^2)$ loops to CUDA architectures to utilize 5000+ GPU cores rather than 16 CPU cores.
+        \item \textbf{Collisions:} Implementing inelastic collision merging for celestial body formations.
+        \item \textbf{Distributed Computing:} Implementing MPI (Message Passing Interface) to run the simulation across clusters of multiple computers.
+    \end{itemize}
+\end{frame}
+
+% Slide 30
+\begin{frame}
+    \centering
+    \Huge \textbf{Questions?} \\
+    \vspace{1cm}
+    \large Thank you for your time.
+\end{frame}
+
+\end{document}
